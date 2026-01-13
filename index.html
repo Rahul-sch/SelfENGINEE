@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SelfEngine - Security-Aware Code Generation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            padding: 60px 20px;
+            color: white;
+        }
+
+        h1 {
+            font-size: 3.5em;
+            margin-bottom: 20px;
+            font-weight: 700;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .tagline {
+            font-size: 1.4em;
+            margin-bottom: 10px;
+            opacity: 0.95;
+        }
+
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.85;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .hero-stats {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 40px;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            background: rgba(255,255,255,0.2);
+            padding: 20px 30px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+
+        .stat-number {
+            font-size: 2.5em;
+            font-weight: bold;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .content {
+            background: white;
+            border-radius: 20px;
+            padding: 50px;
+            margin-top: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .section {
+            margin-bottom: 50px;
+        }
+
+        h2 {
+            color: #667eea;
+            font-size: 2.2em;
+            margin-bottom: 20px;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .modes {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-top: 30px;
+        }
+
+        .mode-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .mode-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+
+        .mode-card h3 {
+            color: #764ba2;
+            font-size: 1.8em;
+            margin-bottom: 15px;
+        }
+
+        .mode-card .badge {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            margin-bottom: 15px;
+        }
+
+        .feature-list {
+            list-style: none;
+            margin-top: 20px;
+        }
+
+        .feature-list li {
+            padding: 12px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+
+        .feature-list li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+
+        .code-block {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 25px;
+            border-radius: 10px;
+            overflow-x: auto;
+            margin: 20px 0;
+            font-family: 'Courier New', monospace;
+            position: relative;
+        }
+
+        .code-block code {
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+
+        .code-label {
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            background: #667eea;
+            color: white;
+            padding: 3px 10px;
+            border-radius: 5px;
+            font-size: 0.8em;
+        }
+
+        .cta-section {
+            text-align: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 50px;
+            border-radius: 15px;
+            margin-top: 50px;
+        }
+
+        .cta-button {
+            display: inline-block;
+            background: white;
+            color: #667eea;
+            padding: 15px 40px;
+            border-radius: 30px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 1.2em;
+            margin-top: 20px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .cta-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        .diagram {
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            margin: 30px 0;
+            border: 2px solid #e9ecef;
+        }
+
+        .flow {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+
+        .flow-box {
+            flex: 1;
+            min-width: 150px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            font-weight: 600;
+        }
+
+        .arrow {
+            font-size: 2em;
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        footer {
+            text-align: center;
+            padding: 30px;
+            color: white;
+            opacity: 0.9;
+        }
+
+        @media (max-width: 768px) {
+            h1 { font-size: 2.5em; }
+            .content { padding: 30px 20px; }
+            .flow { flex-direction: column; }
+            .arrow { transform: rotate(90deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ SelfEngine</h1>
+            <p class="tagline">Security-Aware Decoding for Code LLMs</p>
+            <p class="subtitle">Stop generating unsafe code. Start steering program search with integrated security verification.</p>
+
+            <div class="hero-stats">
+                <div class="stat">
+                    <span class="stat-number">158</span>
+                    <span class="stat-label">Tests Passing</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-number">100%</span>
+                    <span class="stat-label">Coverage</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-number">3</span>
+                    <span class="stat-label">Algorithms</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="content">
+            <div class="section">
+                <h2>🎯 The Problem</h2>
+                <p>Most code-generating LLMs follow a wasteful pipeline:</p>
+                <div class="diagram">
+                    <div class="flow">
+                        <div class="flow-box">Generate Full Program</div>
+                        <span class="arrow">→</span>
+                        <div class="flow-box">Run Static Analysis</div>
+                        <span class="arrow">→</span>
+                        <div class="flow-box">Accept/Reject</div>
+                    </div>
+                    <p style="color: #dc3545; font-weight: 600; margin-top: 20px;">❌ Wastes compute. No steering. Reactive only.</p>
+                </div>
+
+                <p style="margin-top: 20px;"><strong>SelfEngine's approach:</strong></p>
+                <div class="diagram" style="background: #e8f5e9; border-color: #4caf50;">
+                    <div class="flow">
+                        <div class="flow-box">Generate Token</div>
+                        <span class="arrow">→</span>
+                        <div class="flow-box">Verify Prefix</div>
+                        <span class="arrow">→</span>
+                        <div class="flow-box">Score & Prune</div>
+                        <span class="arrow">→</span>
+                        <div class="flow-box">Continue</div>
+                    </div>
+                    <p style="color: #2e7d32; font-weight: 600; margin-top: 20px;">✓ Security-guided search. Real-time pruning. Proactive.</p>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>⚡ Three Powerful Modes</h2>
+
+                <div class="modes">
+                    <div class="mode-card">
+                        <span class="badge">BASELINE</span>
+                        <h3>Entropy Threshold</h3>
+                        <p>Standard beam search with entropy-based branching for high-uncertainty decisions.</p>
+                        <div class="code-block" style="margin-top: 20px;">
+                            <span class="code-label">BASH</span>
+<code>python -m cli.main \
+  "Write a fibonacci function"</code>
+                        </div>
+                    </div>
+
+                    <div class="mode-card">
+                        <span class="badge">NOVEL ALGORITHM</span>
+                        <h3>SAEG</h3>
+                        <p><strong>Semantic-Adaptive Entropy Gating</strong> - Adapts search based on semantic uncertainty and code position.</p>
+                        <div class="code-block" style="margin-top: 20px;">
+                            <span class="code-label">BASH</span>
+<code>python -m cli.main --use-saeg \
+  "Write a binary search"</code>
+                        </div>
+                    </div>
+
+                    <div class="mode-card">
+                        <span class="badge">SECURITY-FIRST</span>
+                        <h3>SABS</h3>
+                        <p><strong>Security-Aware Beam Search</strong> - Prunes unsafe code paths during generation with AST-based verification.</p>
+                        <div class="code-block" style="margin-top: 20px;">
+                            <span class="code-label">BASH</span>
+<code>python -m cli.main --use-sabs \
+  "Write a file processor"</code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>🔬 How SABS Works</h2>
+                <p>Security-Aware Beam Search integrates static analysis directly into the decoding loop:</p>
+
+                <ul class="feature-list">
+                    <li><strong>Token-by-token verification</strong> - Checks security at syntactic boundaries</li>
+                    <li><strong>AST-based analysis</strong> - Detects shell execution, eval/exec, unsafe file ops</li>
+                    <li><strong>Adaptive penalties</strong> - Critical issues kill beams, warnings reduce score</li>
+                    <li><strong>Cache-optimized</strong> - LRU cache prevents redundant analysis</li>
+                    <li><strong>Configurable trade-offs</strong> - Adjust λ to balance security vs. quality</li>
+                </ul>
+
+                <div class="code-block" style="margin-top: 30px;">
+                    <span class="code-label">ALGORITHM</span>
+<code>score = log_probability / length_penalty − λ × security_penalty
+
+if CRITICAL issue:
+    terminate beam
+else if WARNING:
+    reduce score, continue
+else:
+    proceed normally</code>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>📊 Measurable Results</h2>
+
+                <div class="modes">
+                    <div class="mode-card" style="background: linear-gradient(135deg, #fff5f5 0%, #ffe5e5 100%);">
+                        <h3>Security Metrics</h3>
+                        <ul class="feature-list">
+                            <li>Violation rate reduction</li>
+                            <li>Beams killed early</li>
+                            <li>Wasted tokens saved</li>
+                        </ul>
+                    </div>
+
+                    <div class="mode-card" style="background: linear-gradient(135deg, #f0f8ff 0%, #e5f0ff 100%);">
+                        <h3>Quality Metrics</h3>
+                        <ul class="feature-list">
+                            <li>pass@1 on HumanEval</li>
+                            <li>Functional correctness</li>
+                            <li>Code completeness</li>
+                        </ul>
+                    </div>
+
+                    <div class="mode-card" style="background: linear-gradient(135deg, #f0fff4 0%, #e5ffe5 100%);">
+                        <h3>Performance</h3>
+                        <ul class="feature-list">
+                            <li>Latency overhead</li>
+                            <li>Verifier call count</li>
+                            <li>Cache hit rate</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>🚀 Quick Start</h2>
+
+                <div class="code-block">
+                    <span class="code-label">INSTALLATION</span>
+<code># Install dependencies
+pip install -r requirements.txt
+
+# Run tests (no model needed)
+python -m pytest tests/ -v
+
+# Set your model path
+set SUPERCODER_MODEL=C:\path\to\model.gguf
+
+# Generate code with SABS
+python -m cli.main --use-sabs "Write a JSON parser"</code>
+                </div>
+
+                <p style="margin-top: 20px;"><strong>Advanced options:</strong></p>
+                <div class="code-block">
+                    <span class="code-label">EXAMPLES</span>
+<code># Custom security weight
+python -m cli.main --use-sabs --sabs-lambda 1.0 "Execute shell command"
+
+# Export decisions for analysis
+python -m cli.main --use-saeg --export-decisions results.json "..."
+
+# Quiet mode
+python -m cli.main --log-every 0 "Parse CSV file"</code>
+                </div>
+            </div>
+
+            <div class="cta-section">
+                <h2 style="color: white; border: none;">Ready to Build Safer Code?</h2>
+                <p style="font-size: 1.2em; margin-top: 20px;">SelfEngine shifts security from filtering to steering.</p>
+                <a href="QUICKSTART.md" class="cta-button">Get Started →</a>
+                <a href="https://github.com" class="cta-button" style="background: rgba(255,255,255,0.2); color: white; margin-left: 20px;">View on GitHub →</a>
+            </div>
+        </div>
+
+        <footer>
+            <p>SelfEngine - Research-grade security-aware code generation</p>
+            <p style="margin-top: 10px; opacity: 0.7;">Security-Aware Beam Search (SABS) • Semantic-Adaptive Entropy Gating (SAEG)</p>
+        </footer>
+    </div>
+</body>
+</html>

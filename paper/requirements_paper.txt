@@ -1,0 +1,29 @@
+# Requirements for SABS Paper Reproducibility
+# Install with: pip install -r requirements_paper.txt
+
+# Core dependencies
+numpy>=1.23.0
+pytest>=7.0.0
+pytest-timeout>=2.0.0
+
+# Model inference
+llama-cpp-python>=0.2.0
+
+# Visualization (for figures)
+matplotlib>=3.7.0
+
+# Data processing
+pandas>=2.0.0
+
+# Optional: GPU support
+# Uncomment and install manually if needed:
+# llama-cpp-python[cuda]>=0.2.0
+
+# Optional: Jupyter notebooks
+# jupyter>=1.0.0
+# ipykernel>=6.0.0
+
+# Development tools (optional)
+# black>=23.0.0
+# isort>=5.12.0
+# mypy>=1.0.0

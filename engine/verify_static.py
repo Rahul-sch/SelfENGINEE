@@ -18,9 +18,11 @@ Tracks import aliases to detect:
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Set, Optional, Tuple, Dict
+from typing import List, Set, Optional, Tuple, Dict, NamedTuple
+from collections import OrderedDict
 from enum import Enum, auto
 import ast
+import hashlib
 
 
 class Severity(Enum):
@@ -370,3 +372,269 @@ def is_code_safe(code: str) -> Tuple[bool, List[dict]]:
         for i in result.issues
     ]
     return result.passed, issues
+
+
+# =============================================================================
+# SABS Extensions: Security-Aware Beam Search
+# =============================================================================
+
+class ParseState(Enum):
+    """
+    TRI-STATE parse outcome for incremental code analysis.
+
+    PARSE_OK: AST succeeded; security issues are meaningful
+    PARSE_INCOMPLETE: Syntax error at/near EOF; code is likely incomplete (no penalty)
+    PARSE_INVALID: Syntax error early; code is likely unrecoverable
+    """
+    PARSE_OK = auto()
+    PARSE_INCOMPLETE = auto()
+    PARSE_INVALID = auto()
+
+
+# Severity weights for computing security penalty
+SEVERITY_WEIGHTS: Dict[Severity, float] = {
+    Severity.CRITICAL: 10.0,   # Hard fail candidate
+    Severity.ERROR:    5.0,    # Strong penalty
+    Severity.WARNING:  1.0,    # Soft penalty
+    Severity.INFO:     0.1,    # Negligible
+}
+
+
+def is_error_near_end(code: str, error: SyntaxError) -> bool:
+    """
+    Determine if a syntax error is near the end of code (likely incomplete)
+    vs early in the code (likely unrecoverable).
+
+    Args:
+        code: The source code string
+        error: The SyntaxError exception
+
+    Returns:
+        True if error is near the end (last 20% or last line)
+    """
+    lines = code.split('\n')
+    total_lines = len(lines)
+    total_chars = len(code)
+
+    if total_lines == 0 or total_chars == 0:
+        return True  # Empty code is "incomplete"
+
+    # Check line position - if error is on last line or second-to-last
+    if error.lineno and error.lineno >= total_lines - 1:
+        return True
+
+    # Check character offset (if available)
+    if error.lineno and error.offset and total_chars > 0:
+        # Estimate character position of error
+        try:
+            error_pos = sum(len(lines[i]) + 1 for i in range(min(error.lineno - 1, total_lines)))
+            error_pos += (error.offset or 0)
+            # Error in last 20% of code is considered "near end"
+            if error_pos >= total_chars * 0.8:
+                return True
+        except (IndexError, TypeError):
+            pass
+
+    return False
+
+
+def classify_parse_error(code: str, error: SyntaxError) -> ParseState:
+    """
+    Classify a syntax error as INCOMPLETE or INVALID.
+
+    Heuristics for INCOMPLETE:
+      - Error near end of code (line/offset check)
+      - Message contains "unexpected EOF", "expected ':'", etc.
+      - Code ends with incomplete construct
+
+    Heuristics for INVALID:
+      - Error early in code
+      - Error in middle of closed construct
+
+    Args:
+        code: The source code string
+        error: The SyntaxError exception
+
+    Returns:
+        ParseState.PARSE_INCOMPLETE or ParseState.PARSE_INVALID
+    """
+    # Check message for EOF indicators
+    msg = str(error.msg).lower() if error.msg else ""
+    if "eof" in msg or "unexpected end" in msg:
+        return ParseState.PARSE_INCOMPLETE
+    if "expected" in msg and is_error_near_end(code, error):
+        return ParseState.PARSE_INCOMPLETE
+
+    # Check if code ends with incomplete construct
+    stripped = code.rstrip()
+    incomplete_endings = (
+        ':', '(', '[', '{', ',', '\\',
+        'def', 'if', 'class', 'for', 'while', 'try', 'with', 'elif', 'else',
+        'async', 'await', 'return', 'yield', 'raise', 'import', 'from',
+    )
+    if any(stripped.endswith(e) for e in incomplete_endings):
+        return ParseState.PARSE_INCOMPLETE
+
+    # Check position - if error is near end, likely incomplete
+    if is_error_near_end(code, error):
+        return ParseState.PARSE_INCOMPLETE
+
+    # Otherwise, likely invalid (early error)
+    return ParseState.PARSE_INVALID
+
+
+def compute_sec_penalty(issues: List[SecurityIssue]) -> float:
+    """
+    Compute the total security penalty from a list of issues.
+
+    Args:
+        issues: List of SecurityIssue objects
+
+    Returns:
+        Sum of severity weights (always >= 0)
+    """
+    return sum(SEVERITY_WEIGHTS.get(i.severity, 0.0) for i in issues)
+
+
+class IncrementalResult(NamedTuple):
+    """
+    Result of incremental security analysis.
+
+    Attributes:
+        parse_state: TRI-STATE parse outcome
+        issues: List of SecurityIssue objects (empty if not PARSE_OK)
+        sec_penalty: Computed security penalty (0.0 if not PARSE_OK)
+    """
+    parse_state: ParseState
+    issues: List[SecurityIssue]
+    sec_penalty: float
+
+
+class SecurityCache:
+    """
+    LRU cache for security analysis results.
+
+    Uses OrderedDict for O(1) get/put/eviction operations.
+    Key: SHA256(code_prefix)[:16]  (16 hex chars)
+    Value: IncrementalResult
+
+    Args:
+        max_size: Maximum number of entries (default: 1000)
+    """
+
+    def __init__(self, max_size: int = 1000):
+        self._cache: OrderedDict[str, IncrementalResult] = OrderedDict()
+        self._max_size = max_size
+        self._hits = 0
+        self._misses = 0
+
+    def _hash(self, code: str) -> str:
+        """Generate hash key for code prefix."""
+        return hashlib.sha256(code.encode('utf-8', errors='replace')).hexdigest()[:16]
+
+    def get(self, code: str) -> Optional[IncrementalResult]:
+        """
+        Get cached result for code, updating LRU order.
+
+        Returns:
+            IncrementalResult if found, None otherwise
+        """
+        key = self._hash(code)
+        if key in self._cache:
+            self._cache.move_to_end(key)  # O(1) LRU update
+            self._hits += 1
+            return self._cache[key]
+        self._misses += 1
+        return None
+
+    def put(self, code: str, result: IncrementalResult) -> None:
+        """
+        Cache result for code, evicting oldest if at capacity.
+        """
+        key = self._hash(code)
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            self._cache[key] = result  # Update value
+        else:
+            if len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)  # O(1) evict oldest
+            self._cache[key] = result
+
+    def clear(self) -> None:
+        """Clear all cached entries."""
+        self._cache.clear()
+        self._hits = 0
+        self._misses = 0
+
+    @property
+    def stats(self) -> Dict[str, int]:
+        """Get cache statistics."""
+        return {
+            'size': len(self._cache),
+            'max_size': self._max_size,
+            'hits': self._hits,
+            'misses': self._misses,
+            'hit_rate': self._hits / max(self._hits + self._misses, 1),
+        }
+
+
+def analyze_incremental(
+    code: str,
+    cache: Optional[SecurityCache] = None
+) -> IncrementalResult:
+    """
+    Incremental-safe security analysis with TRI-STATE parsing.
+
+    This function is designed for use during code generation where
+    the code may be incomplete. It handles:
+    - Empty/whitespace-only code → PARSE_INCOMPLETE
+    - Syntax errors near end → PARSE_INCOMPLETE (no penalty)
+    - Syntax errors early → PARSE_INVALID (small fixed penalty)
+    - Successful parse → PARSE_OK (run full security analysis)
+
+    Args:
+        code: Python source code string (may be incomplete)
+        cache: Optional SecurityCache for LRU caching
+
+    Returns:
+        IncrementalResult with parse_state, issues, and sec_penalty
+    """
+    # Handle empty code
+    if not code or not code.strip():
+        return IncrementalResult(ParseState.PARSE_INCOMPLETE, [], 0.0)
+
+    # Check cache first
+    if cache:
+        cached = cache.get(code)
+        if cached is not None:
+            return cached
+
+    # Try to parse
+    try:
+        tree = ast.parse(code)
+        parse_state = ParseState.PARSE_OK
+    except SyntaxError as e:
+        # Classify the syntax error
+        parse_state = classify_parse_error(code, e)
+
+        if parse_state == ParseState.PARSE_INCOMPLETE:
+            # Incomplete code - no penalty
+            result = IncrementalResult(ParseState.PARSE_INCOMPLETE, [], 0.0)
+        else:
+            # PARSE_INVALID - small fixed penalty for early errors
+            result = IncrementalResult(ParseState.PARSE_INVALID, [], 2.0)
+
+        if cache:
+            cache.put(code, result)
+        return result
+
+    # Parse succeeded - run security analysis
+    visitor = SecurityVisitor()
+    visitor.visit(tree)
+    issues = visitor.result.issues
+    penalty = compute_sec_penalty(issues)
+
+    result = IncrementalResult(ParseState.PARSE_OK, issues, penalty)
+    if cache:
+        cache.put(code, result)
+    return result

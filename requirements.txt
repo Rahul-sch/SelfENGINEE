@@ -1,0 +1,19 @@
+# SABS (Security-Aware Beam Search) Core Dependencies
+# Pin to exact versions for reproducibility
+
+# Core
+numpy>=1.23.0,<2.0
+pytest>=7.0.0
+
+# Optional: Model inference (install separately based on hardware)
+# llama-cpp-python>=0.2.0
+
+# Visualization (optional, for figures)
+matplotlib>=3.7.0
+
+# Standard library only (no external deps needed for core SABS)
+# ast, hashlib, collections, dataclasses, enum, typing - all stdlib
+
+# Development (optional)
+# pytest-cov>=4.0.0
+# black>=23.0.0

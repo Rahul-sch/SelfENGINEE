@@ -18,6 +18,7 @@ import logging
 
 if TYPE_CHECKING:
     from engine.model_adapter import ModelAdapter
+    from engine.constraints import ConstraintTracker
 
 logger = logging.getLogger(__name__)
 
@@ -51,18 +52,27 @@ class Beam:
 
     Beams own their complete token sequence. Checkpoints reference
     positions within this sequence but do not duplicate the tokens.
+
+    SABS fields (Security-Aware Beam Search):
+      - sec_penalty: Accumulated security penalty (>= 0)
+      - constraint_tracker: Per-beam syntactic state tracker
+      - tokens_since_security_check: Counter for verification scheduling
     """
     beam_id: str = field(default_factory=lambda: str(uuid4())[:8])
     tokens: List[int] = field(default_factory=list)
     prompt_length: int = 0
     log_prob: float = 0.0
-    verification_score: float = 0.0
+    verification_score: float = 0.0  # Legacy, kept for compatibility
     checkpoints: List[Checkpoint] = field(default_factory=list)
     parent_beam_id: Optional[str] = None
     branch_checkpoint_id: Optional[str] = None
     depth: int = 0
     status: BeamStatus = BeamStatus.ACTIVE
     completion_reason: Optional[str] = None
+    # SABS fields
+    sec_penalty: float = 0.0  # Raw accumulated security penalty (>= 0)
+    constraint_tracker: Optional["ConstraintTracker"] = None  # Per-beam syntax state
+    tokens_since_security_check: int = 0  # Counter for verification scheduling
 
     @property
     def generated_tokens(self) -> List[int]:
@@ -76,11 +86,23 @@ class Beam:
     def current_position(self) -> int:
         return len(self.tokens)
 
-    def normalized_score(self, length_penalty: float = 1.0) -> float:
+    def normalized_score(self, config: "SearchConfig") -> float:
+        """
+        Compute normalized beam score with length penalty and security penalty.
+
+        Score = (log_prob / length_factor) - λ * sec_penalty
+
+        Args:
+            config: SearchConfig containing length_penalty and security_lambda
+
+        Returns:
+            Normalized score (higher is better)
+        """
         gen_len = max(self.num_generated, 1)
-        length_factor = ((5 + gen_len) / 6) ** length_penalty
+        length_factor = ((5 + gen_len) / 6) ** config.length_penalty
         base = self.log_prob / length_factor
-        return base + 0.5 * self.verification_score
+        # SABS: SUBTRACT security penalty (higher penalty = lower score)
+        return base - config.security_lambda * self.sec_penalty
 
     def add_checkpoint(
         self,
@@ -114,17 +136,30 @@ class Beam:
         return self.tokens[:position]
 
     def clone(self, new_id: Optional[str] = None) -> "Beam":
-        """Clone beam for branching (copies token list and checkpoint refs)."""
+        """
+        Clone beam for branching.
+
+        Preserves:
+          - Token list (copied)
+          - Checkpoint refs (copied)
+          - sec_penalty (preserved for SABS)
+          - constraint_tracker (cloned if present)
+          - tokens_since_security_check (preserved)
+        """
         return Beam(
             beam_id=new_id or str(uuid4())[:8],
             tokens=list(self.tokens),
             prompt_length=self.prompt_length,
             log_prob=self.log_prob,
-            verification_score=0.0,
+            verification_score=self.verification_score,  # Preserve
             checkpoints=list(self.checkpoints),
             parent_beam_id=self.beam_id,
             depth=self.depth + 1,
-            status=BeamStatus.ACTIVE
+            status=BeamStatus.ACTIVE,
+            # SABS: Preserve security state
+            sec_penalty=self.sec_penalty,
+            constraint_tracker=self.constraint_tracker.clone() if self.constraint_tracker else None,
+            tokens_since_security_check=self.tokens_since_security_check,
         )
 
 
@@ -137,6 +172,7 @@ class SearchConfig:
     checkpoint_interval: int = 16
     length_penalty: float = 1.0
     max_depth: int = 3
+    security_lambda: float = 0.0  # SABS: 0.0 means disabled, higher = more security-focused
 
 
 class BeamManager:
@@ -398,13 +434,13 @@ class BeamManager:
         self.pruned_beams.append(beam)
 
     def prune_beams(self) -> List[Beam]:
-        """Keep top beam_width beams."""
+        """Keep top beam_width beams (uses security_lambda from config)."""
         if len(self.active_beams) <= self.config.beam_width:
             return []
 
         sorted_beams = sorted(
             self.active_beams.values(),
-            key=lambda b: b.normalized_score(self.config.length_penalty),
+            key=lambda b: b.normalized_score(self.config),  # Pass full config
             reverse=True
         )
 
@@ -422,7 +458,7 @@ class BeamManager:
         return pruned
 
     def deduplicate(self) -> List[Beam]:
-        """Remove duplicate token sequences."""
+        """Remove duplicate token sequences (uses security_lambda from config)."""
         seen: Dict[Tuple[int, ...], Beam] = {}
         dups = []
 
@@ -430,7 +466,7 @@ class BeamManager:
             key = tuple(beam.tokens)
             if key in seen:
                 existing = seen[key]
-                if beam.normalized_score() > existing.normalized_score():
+                if beam.normalized_score(self.config) > existing.normalized_score(self.config):
                     self.active_beams.pop(existing.beam_id, None)
                     existing.status = BeamStatus.PRUNED
                     dups.append(existing)
@@ -446,11 +482,11 @@ class BeamManager:
         return dups
 
     def get_best_beam(self) -> Optional[Beam]:
-        """Get highest-scoring beam."""
+        """Get highest-scoring beam (uses security_lambda from config)."""
         all_beams = self.completed_beams + list(self.active_beams.values())
         if not all_beams:
             return None
-        return max(all_beams, key=lambda b: b.normalized_score(self.config.length_penalty))
+        return max(all_beams, key=lambda b: b.normalized_score(self.config))
 
     @property
     def has_active_beams(self) -> bool:

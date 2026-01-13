@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional, Set
 from enum import Enum, auto
+import copy
 
 
 class StringState(Enum):
@@ -387,3 +388,20 @@ class ConstraintTracker:
             'at_statement_start': s.at_statement_start,
             'pending_id': self._pending_id.chars,
         }
+
+    def clone(self) -> "ConstraintTracker":
+        """
+        Create a deep copy of this tracker with all state preserved.
+
+        Used by Beam.clone() to give each branched beam its own
+        independent constraint tracker state.
+
+        Returns:
+            New ConstraintTracker with identical state
+        """
+        new_tracker = ConstraintTracker()
+        new_tracker._state = copy.copy(self._state)
+        new_tracker._pending_escape = self._pending_escape
+        new_tracker._pending_id = copy.copy(self._pending_id)
+        new_tracker._total_chars_seen = self._total_chars_seen
+        return new_tracker

@@ -8,6 +8,9 @@ Usage:
     # SAEG (Semantic-Adaptive Entropy Gating) - novel algorithm
     python -m cli.main --use-saeg "Write a binary search function"
 
+    # SABS (Security-Aware Beam Search) - security verification during generation
+    python -m cli.main --use-sabs "Write a shell command executor"
+
     # Export decisions for analysis
     python -m cli.main --use-saeg --export-decisions ./results.json "..."
 
@@ -35,6 +38,12 @@ Examples:
 
   # Using SAEG (novel algorithm)
   python -m cli.main --use-saeg "Write a binary search function"
+
+  # Using SABS (Security-Aware Beam Search)
+  python -m cli.main --use-sabs "Write a file processor"
+
+  # SABS with custom security weight
+  python -m cli.main --use-sabs --sabs-lambda 1.0 "Execute shell command"
 
   # Experiment mode: export decisions for analysis
   python -m cli.main --use-saeg --export-decisions ./saeg_results.json "..."
@@ -69,6 +78,23 @@ Examples:
     saeg_group.add_argument("--saeg-mu", type=float, default=0.2, help="Syntactic complexity modifier")
     saeg_group.add_argument("--saeg-lambda", type=float, default=0.1, help="Position decay rate")
     saeg_group.add_argument("--saeg-k", type=int, default=5, help="Top-k for semantic uncertainty")
+
+    # SABS configuration (Security-Aware Beam Search)
+    sabs_group = parser.add_argument_group("SABS Configuration (Security-Aware Beam Search)")
+    sabs_group.add_argument("--use-sabs", action="store_true",
+        help="Enable Security-Aware Beam Search")
+    sabs_group.add_argument("--sabs-lambda", type=float, default=0.5,
+        help="Security penalty weight (higher = more security-focused)")
+    sabs_group.add_argument("--sabs-hard-fail", action="store_true", default=True,
+        help="Hard-fail beams with CRITICAL security issues")
+    sabs_group.add_argument("--sabs-no-hard-fail", action="store_false", dest="sabs_hard_fail",
+        help="Use soft penalties only, no hard-fail")
+    sabs_group.add_argument("--sabs-max-calls", type=int, default=50,
+        help="Max verifier calls per generation")
+    sabs_group.add_argument("--sabs-min-tokens", type=int, default=8,
+        help="Min tokens between security checks")
+    sabs_group.add_argument("--sabs-log", type=str, default=None,
+        help="Path for SABS decision log (JSONL)")
 
     # Experiment/logging
     exp_group = parser.add_argument_group("Experiment Configuration")
@@ -114,12 +140,27 @@ Examples:
         saeg_lambda=args.saeg_lambda,
         saeg_k=args.saeg_k,
 
+        # SABS configuration
+        use_sabs=args.use_sabs,
+        sabs_lambda=args.sabs_lambda,
+        sabs_hard_fail=args.sabs_hard_fail,
+        sabs_max_calls=args.sabs_max_calls,
+        sabs_min_tokens=args.sabs_min_tokens,
+        sabs_log_path=args.sabs_log,
+
         # Experiment
         export_decisions=args.export_decisions is not None,
         export_path=args.export_decisions,
     )
 
-    print(f"Strategy: {'SAEG (novel)' if args.use_saeg else 'BASELINE (entropy threshold)'}")
+    # Determine strategy string
+    if args.use_sabs:
+        strategy_str = f"SABS (λ={args.sabs_lambda}, hard_fail={args.sabs_hard_fail})"
+    elif args.use_saeg:
+        strategy_str = "SAEG (novel)"
+    else:
+        strategy_str = "BASELINE (entropy threshold)"
+    print(f"Strategy: {strategy_str}")
     print(f"Model: {model_path}")
     print("-" * 60)
 
@@ -131,20 +172,34 @@ Examples:
     print("=" * 80)
     print(out)
 
-    # Print experiment summary if using SAEG
-    if args.use_saeg:
-        results = orch.get_experiment_results()
-        if 'saeg_statistics' in results:
-            stats = results['saeg_statistics']
-            print("\n" + "-" * 40)
-            print("SAEG STATISTICS")
-            print("-" * 40)
-            print(f"  Decisions: {stats.get('total_decisions', 0)}")
-            print(f"  Branch rate: {stats.get('branch_rate', 0):.2%}")
-            print(f"  Avg entropy: {stats.get('entropy_mean', 0):.3f}")
-            print(f"  Avg semantic uncertainty: {stats.get('semantic_unc_mean', 0):.3f}")
-            print(f"  Branch avg entropy: {stats.get('branch_avg_entropy', 0):.3f}")
-            print(f"  Flow avg entropy: {stats.get('flow_avg_entropy', 0):.3f}")
+    # Print experiment summary
+    results = orch.get_experiment_results()
+
+    if args.use_saeg and 'saeg_statistics' in results:
+        stats = results['saeg_statistics']
+        print("\n" + "-" * 40)
+        print("SAEG STATISTICS")
+        print("-" * 40)
+        print(f"  Decisions: {stats.get('total_decisions', 0)}")
+        print(f"  Branch rate: {stats.get('branch_rate', 0):.2%}")
+        print(f"  Avg entropy: {stats.get('entropy_mean', 0):.3f}")
+        print(f"  Avg semantic uncertainty: {stats.get('semantic_unc_mean', 0):.3f}")
+        print(f"  Branch avg entropy: {stats.get('branch_avg_entropy', 0):.3f}")
+        print(f"  Flow avg entropy: {stats.get('flow_avg_entropy', 0):.3f}")
+
+    if args.use_sabs and 'sabs_statistics' in results:
+        stats = results['sabs_statistics']
+        print("\n" + "-" * 40)
+        print("SABS STATISTICS")
+        print("-" * 40)
+        print(f"  Verifier calls: {stats.get('verifier_calls', 0)}")
+        print(f"  Total decisions: {stats.get('total_decisions', 0)}")
+        print(f"  Hard fails: {stats.get('hard_fails', 0)}")
+        print(f"  Soft penalties: {stats.get('soft_penalties', 0)}")
+        print(f"  No issues: {stats.get('no_issues', 0)}")
+        print(f"  Skipped: {stats.get('skipped', 0)}")
+        if stats.get('total_penalty_applied', 0) > 0:
+            print(f"  Total penalty applied: {stats.get('total_penalty_applied', 0):.2f}")
 
     return 0
 

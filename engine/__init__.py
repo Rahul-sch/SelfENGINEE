@@ -56,6 +56,25 @@ from engine.saeg import (
     compute_adaptive_threshold,
 )
 
+from engine.security_controller import (
+    SABSConfig,
+    SABSAction,
+    SABSDecision,
+    SecurityController,
+    extract_code_only,
+)
+
+from engine.verify_static import (
+    ParseState,
+    IncrementalResult,
+    SecurityCache,
+    analyze_incremental,
+    SEVERITY_WEIGHTS,
+    compute_sec_penalty,
+    classify_parse_error,
+    is_error_near_end,
+)
+
 __all__ = [
     # constraints
     'ConstraintTracker',
@@ -92,4 +111,19 @@ __all__ = [
     'compute_semantic_uncertainty',
     'compute_position_weight',
     'compute_adaptive_threshold',
+    # sabs (security-aware beam search)
+    'SABSConfig',
+    'SABSAction',
+    'SABSDecision',
+    'SecurityController',
+    'extract_code_only',
+    # verify_static extensions
+    'ParseState',
+    'IncrementalResult',
+    'SecurityCache',
+    'analyze_incremental',
+    'SEVERITY_WEIGHTS',
+    'compute_sec_penalty',
+    'classify_parse_error',
+    'is_error_near_end',
 ]

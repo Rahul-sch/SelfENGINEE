@@ -58,3 +58,5 @@ htmlcov/
 # Claude Code
 .claude/
 nul
+
+.vercel

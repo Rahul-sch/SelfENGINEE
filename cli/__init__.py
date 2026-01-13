@@ -1,0 +1,1 @@
+"""SuperCoder CLI entry point."""

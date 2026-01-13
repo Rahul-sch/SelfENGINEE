@@ -45,6 +45,17 @@ from engine.orchestrator import (
     entropy_and_varentropy_from_logits,
 )
 
+from engine.saeg import (
+    SAEGConfig,
+    SAEGDecision,
+    SAEGTracker,
+    saeg_branch_decision,
+    compute_entropy,
+    compute_semantic_uncertainty,
+    compute_position_weight,
+    compute_adaptive_threshold,
+)
+
 __all__ = [
     # constraints
     'ConstraintTracker',
@@ -72,4 +83,13 @@ __all__ = [
     'Orchestrator',
     'OrchestratorConfig',
     'entropy_and_varentropy_from_logits',
+    # saeg (novel algorithm)
+    'SAEGConfig',
+    'SAEGDecision',
+    'SAEGTracker',
+    'saeg_branch_decision',
+    'compute_entropy',
+    'compute_semantic_uncertainty',
+    'compute_position_weight',
+    'compute_adaptive_threshold',
 ]

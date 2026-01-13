@@ -2,17 +2,25 @@
 Orchestrator for SuperCoder engine.
 
 Ties together model adapter, beam search, and entropy-gated branching.
-Simple hardcoded logic: high entropy -> branch, low entropy -> flow.
+
+Supports TWO branching strategies:
+1. BASELINE: Simple entropy threshold (entropy >= threshold → branch)
+2. SAEG: Semantic-Adaptive Entropy Gating (novel algorithm)
+
+Use --use-saeg flag to enable SAEG for experiments.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Tuple
+from dataclasses import dataclass, field
+from typing import Tuple, Optional, Dict, List
 import time
 import numpy as np
+import json
 
 from engine.model_adapter import ModelAdapter
 from engine.search import BeamManager, SearchConfig, BeamStatus
+from engine.constraints import ConstraintTracker
+from engine.saeg import SAEGConfig, SAEGTracker, saeg_branch_decision
 
 
 @dataclass
@@ -33,6 +41,19 @@ class OrchestratorConfig:
     entropy_threshold: float = 6.0
     branch_count: int = 2
     log_every: int = 1
+
+    # SAEG configuration (novel algorithm)
+    use_saeg: bool = False
+    saeg_alpha: float = 1.0      # Entropy weight
+    saeg_beta: float = 0.5       # Semantic uncertainty weight
+    saeg_gamma: float = 0.3      # Position weight
+    saeg_mu: float = 0.2         # Syntactic complexity modifier
+    saeg_lambda: float = 0.1     # Position decay rate
+    saeg_k: int = 5              # Top-k for semantic uncertainty
+
+    # Experiment tracking
+    export_decisions: bool = False
+    export_path: Optional[str] = None
 
 
 def _softmax(logits: np.ndarray) -> np.ndarray:
@@ -62,9 +83,15 @@ class Orchestrator:
     """
     Main orchestrator for code generation.
 
-    Uses entropy-gated branching:
-    - High entropy (uncertainty) -> create branches to explore alternatives
-    - Low entropy (confidence) -> flow forward with sampling
+    Supports TWO branching strategies:
+    1. BASELINE: entropy >= threshold → branch
+    2. SAEG: Semantic-Adaptive Entropy Gating (use_saeg=True)
+
+    SAEG considers:
+    - Entropy (distributional uncertainty)
+    - Semantic uncertainty (embedding distance between top-k)
+    - Position weight (early tokens matter more)
+    - Adaptive threshold (respects syntactic context)
     """
 
     def __init__(self, cfg: OrchestratorConfig):
@@ -92,13 +119,41 @@ class Orchestrator:
             model=self.model,
         )
 
+        # Constraint tracker for SAEG syntactic state
+        self.constraint_tracker = ConstraintTracker()
+
+        # SAEG setup
+        self.saeg_config: Optional[SAEGConfig] = None
+        self.saeg_tracker: Optional[SAEGTracker] = None
+
+        if cfg.use_saeg:
+            self.saeg_config = SAEGConfig(
+                alpha=cfg.saeg_alpha,
+                beta=cfg.saeg_beta,
+                gamma=cfg.saeg_gamma,
+                base_threshold=cfg.entropy_threshold,
+                mu=cfg.saeg_mu,
+                lambda_=cfg.saeg_lambda,
+                k=cfg.saeg_k,
+                log_decisions=cfg.log_every > 0,
+            )
+            self.saeg_tracker = SAEGTracker(self.saeg_config)
+            print(f"SAEG enabled: alpha={cfg.saeg_alpha}, beta={cfg.saeg_beta}, gamma={cfg.saeg_gamma}")
+
     def generate(self, prompt: str) -> str:
         """
         Generate code from prompt using entropy-gated beam search.
 
+        If use_saeg=True, uses Semantic-Adaptive Entropy Gating.
+        Otherwise, uses baseline entropy threshold.
+
         Returns the best beam's output.
         """
         self.search.reset()
+        self.constraint_tracker.reset()
+
+        if self.saeg_tracker:
+            self.saeg_tracker.reset()
 
         prompt_tokens = self.model.tokenize(prompt)
         self.model.clear_runtime_state()
@@ -108,8 +163,12 @@ class Orchestrator:
         self.search.create_initial_beam(prompt_tokens)
         step_idx = 0
 
-        print("Thinking... (engine loop started)")
+        strategy = "SAEG" if self.cfg.use_saeg else "BASELINE"
+        print(f"Thinking... (engine loop started, strategy={strategy})")
         start_t = time.time()
+
+        # Track generated text for constraint tracking
+        generated_text = ""
 
         while self.search.has_active_beams:
             step_idx += 1
@@ -136,17 +195,48 @@ class Orchestrator:
                         beam, entropy=ent, varentropy=varent, save_state=True
                     )
 
-                # Entropy-gated branching decision
-                do_branch = (
-                    ent >= self.cfg.entropy_threshold
-                    and self.search.branches_remaining > 0
-                    and beam.depth < self.search.config.max_depth
-                )
+                # BRANCHING DECISION
+                if self.cfg.use_saeg and self.saeg_config:
+                    # SAEG: Semantic-Adaptive Entropy Gating
+                    decision = saeg_branch_decision(
+                        logits=logits,
+                        position=beam.num_generated,
+                        constraint_state=self.constraint_tracker.state,
+                        config=self.saeg_config,
+                        embeddings=None,  # TODO: expose embeddings from model
+                    )
+
+                    if self.saeg_tracker:
+                        self.saeg_tracker.record(decision)
+
+                    do_branch = (
+                        decision.should_branch
+                        and self.search.branches_remaining > 0
+                        and beam.depth < self.search.config.max_depth
+                    )
+
+                    if step_idx % self.cfg.log_every == 0:
+                        action = "BRANCH" if do_branch else "FLOW"
+                        print(
+                            f"[{step_idx}] beam={beam.beam_id} "
+                            f"score={decision.branch_score:.3f} "
+                            f"thresh={decision.adaptive_threshold:.3f} "
+                            f"ent={ent:.3f} sem={decision.semantic_uncertainty:.3f} "
+                            f"action={action}"
+                        )
+                else:
+                    # BASELINE: Simple entropy threshold
+                    do_branch = (
+                        ent >= self.cfg.entropy_threshold
+                        and self.search.branches_remaining > 0
+                        and beam.depth < self.search.config.max_depth
+                    )
+
+                    if step_idx % self.cfg.log_every == 0:
+                        action = "BRANCH" if do_branch else "FLOW"
+                        print(f"[{step_idx}] beam={beam.beam_id} ent={ent:.3f} var={varent:.3f} action={action}")
 
                 if do_branch:
-                    if step_idx % self.cfg.log_every == 0:
-                        print(f"[{step_idx}] beam={beam.beam_id} ent={ent:.3f} var={varent:.3f} action=BRANCH")
-
                     new_beams = self.search.branch_beam(
                         beam=beam,
                         logits=logits,
@@ -160,6 +250,11 @@ class Orchestrator:
                             and nb.tokens
                             and nb.tokens[-1] == self.model.eos_token):
                             self.search.complete_beam(nb, reason="eos")
+
+                        # Update constraint tracker with new token
+                        if nb.tokens:
+                            token_text = self.model.detokenize([nb.tokens[-1]])
+                            self.constraint_tracker.update(token_text)
                     continue
 
                 # Normal flow: sample and step
@@ -172,8 +267,9 @@ class Orchestrator:
                 )
                 self.search.step_beam(beam, token_id, logp)
 
-                if step_idx % self.cfg.log_every == 0:
-                    print(f"[{step_idx}] beam={beam.beam_id} ent={ent:.3f} var={varent:.3f} action=FLOW")
+                # Update constraint tracker
+                token_text = self.model.detokenize([token_id])
+                self.constraint_tracker.update(token_text)
 
                 # Check EOS
                 if self.model.eos_token is not None and token_id == self.model.eos_token:
@@ -194,6 +290,49 @@ class Orchestrator:
         out = self.model.detokenize(best.tokens)
 
         dt = time.time() - start_t
-        print(f"Thinking... (done in {dt:.2f}s) best_beam={best.beam_id} reason={best.completion_reason}")
+
+        # Print summary
+        summary = f"Thinking... (done in {dt:.2f}s) best_beam={best.beam_id} reason={best.completion_reason}"
+        if self.saeg_tracker:
+            stats = self.saeg_tracker.get_statistics()
+            summary += f" | SAEG branch_rate={stats.get('branch_rate', 0):.2%}"
+        print(summary)
+
+        # Export decisions if requested
+        if self.cfg.export_decisions and self.cfg.export_path and self.saeg_tracker:
+            self._export_decisions(self.cfg.export_path)
 
         return out
+
+    def _export_decisions(self, path: str) -> None:
+        """Export SAEG decisions to JSON for analysis."""
+        if not self.saeg_tracker:
+            return
+
+        data = {
+            'config': {
+                'use_saeg': self.cfg.use_saeg,
+                'alpha': self.cfg.saeg_alpha,
+                'beta': self.cfg.saeg_beta,
+                'gamma': self.cfg.saeg_gamma,
+                'base_threshold': self.cfg.entropy_threshold,
+            },
+            'statistics': self.saeg_tracker.get_statistics(),
+            'decisions': self.saeg_tracker.to_csv_rows(),
+        }
+
+        with open(path, 'w') as f:
+            json.dump(data, f, indent=2)
+        print(f"Exported {len(data['decisions'])} decisions to {path}")
+
+    def get_experiment_results(self) -> Dict:
+        """Get experiment results for comparison."""
+        results = {
+            'strategy': 'SAEG' if self.cfg.use_saeg else 'BASELINE',
+            'entropy_threshold': self.cfg.entropy_threshold,
+        }
+
+        if self.saeg_tracker:
+            results['saeg_statistics'] = self.saeg_tracker.get_statistics()
+
+        return results
